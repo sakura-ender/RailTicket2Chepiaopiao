@@ -4,20 +4,23 @@ from email.header import decode_header
 import os
 import time
 from bs4 import BeautifulSoup
-
+import tkinter as tk
+from tkinter import filedialog, messagebox
+import threading
 
 def login_qq_email(username, password):
     imap_server = 'imap.qq.com'
     try:
         imap = imaplib.IMAP4_SSL(imap_server)
         imap.login(username, password)
-        print("登录成功！")
         return imap
     except imaplib.IMAP4.error as e:
-        print(f"登录失败: {e}")
+        log_message(f"Login failed: {e}")
+        messagebox.showerror("登录失败", f"登录失败: {e}")
         return None
     except Exception as e:
-        print(f"连接到IMAP服务器时发生错误: {e}")
+        log_message(f"Connection error: {e}")
+        messagebox.showerror("连接错误", f"连接到IMAP服务器时发生错误: {e}")
         return None
 
 
@@ -35,7 +38,6 @@ def decode_payload(payload):
             return payload.decode(charset.strip()).strip()
         except UnicodeDecodeError:
             continue
-    print("无法解码邮件正文。")
     return None
 
 
@@ -48,14 +50,14 @@ def extract_body_from_msg(msg):
                 payload = part.get_payload(decode=True)
                 if payload:
                     body = decode_payload(payload)
-                    if body and '<' in body and '>' in body:  # Check if body contains HTML tags
+                    if body and '<' in body and '>' in body:
                         text = BeautifulSoup(body, 'html.parser').get_text(separator='\n')
                         return '\n'.join([line.strip() for line in text.splitlines() if line.strip()])
     else:
         payload = msg.get_payload(decode=True)
         if payload:
             body = decode_payload(payload)
-            if body and '<' in body and '>' in body:  # Check if body contains HTML tags
+            if body and '<' in body and '>' in body:
                 text = BeautifulSoup(body, 'html.parser').get_text(separator='\n')
                 return '\n'.join([line.strip() for line in text.splitlines() if line.strip()])
     return None
@@ -68,19 +70,15 @@ def process_email(email_id, imap, keyword, retries=3, delay=5):
             if status == 'OK':
                 break
             else:
-                print(f"意外的状态: {status}, 正在重试 ({attempt}/{retries})...")
+                time.sleep(delay)
         except imaplib.IMAP4.abort as e:
-            print(f"Fetch命令中止: {e}, 正在重试 ({attempt}/{retries})...")
             time.sleep(delay)
         except Exception as e:
-            print(f"发生意外错误: {e}, 正在重试 ({attempt}/{retries})...")
             time.sleep(delay)
     else:
-        print(f"在 {retries} 次尝试后无法获取邮件 {email_id}。")
         return None
 
     if not msg_data:
-        print(f"邮件 {email_id} 没有消息数据。")
         return None
 
     for response_part in msg_data:
@@ -88,7 +86,6 @@ def process_email(email_id, imap, keyword, retries=3, delay=5):
             try:
                 msg = email.message_from_bytes(response_part[1])
             except Exception as e:
-                print(f"解析邮件时出错: {e}")
                 continue
 
             body = extract_body_from_msg(msg)
@@ -102,31 +99,31 @@ def fetch_emails_with_keyword_in_body(imap, keyword):
     try:
         imap.select("inbox")
     except Exception as e:
-        print(f"无法选择收件箱: {e}")
+        log_message(f"无法选择收件箱: {e}")
         return []
 
     try:
         status, messages = imap.search(None, 'ALL')
     except Exception as e:
-        print(f"搜索邮件时出错: {e}")
+        log_message(f"搜索邮件时出错: {e}")
         return []
 
     if status != "OK":
-        print("获取邮件失败")
+        log_message("获取邮件失败")
         return []
 
     email_ids = messages[0].split()
-    print(f"收件箱中共有 {len(email_ids)} 封邮件。")
-
+    log_message(f"收件箱中共有 {len(email_ids)} 封邮件。")
     matching_emails = []
 
     for email_id in email_ids:
         result = process_email(email_id, imap, keyword)
         if result:
             matching_emails.append(result)
-            print(f"找到匹配的邮件(ID: {email_id.decode()}), 包含关键词 '{keyword}'。")
-
-    print(f"总共找到 {len(matching_emails)} 封正文中包含 '{keyword}' 的邮件。")
+            log_message(f"找到匹配的邮件(ID: {email_id.decode()}), 包含关键词 '{keyword}'。")
+        else:
+            log_message(f"未找到匹配的邮件(ID: {email_id.decode()})。")
+    log_message(f"总共找到 {len(matching_emails)} 封正文中包含 '{keyword}' 的邮件。")
     return matching_emails
 
 
@@ -137,57 +134,92 @@ def save_all_emails_to_single_txt(emails, save_path):
                 subject = msg.get("Subject", "")
                 decoded_subject = decode_mime_words(subject)
                 f.write(f"\n###\n")
-                # f.write(f"标题: {decoded_subject}\n")
-
                 body = extract_body_from_msg(msg)
-
                 if body:
                     f.write(f"正文:\n{body}\n")
                 else:
                     f.write("正文: 无法解码或为空。\n")
                 f.write("\n###\n")
-                print(f"正在导出第 {i} 封邮件到 {save_path}。")
-        print(f"所有邮件已导出到 {save_path}")
+        log_message(f"所有邮件已导出到 {save_path}")
+        messagebox.showinfo("完成", f"所有邮件已导出到 {save_path}")
+        folder_path = os.path.dirname(save_path)
+        os.startfile(folder_path)
     except Exception as e:
-        print(f"保存邮件到文件时出错: {e}")
+        log_message(f"Error saving emails: {e}")
+        messagebox.showerror("保存错误", f"保存邮件到文件时出错: {e}")
+
+
+def log_message(message):
+    log_text.insert(tk.END, message + '\n')
+    log_text.see(tk.END)
+
+
 
 
 def main():
-    username = '570802322@qq.com'
-    password = 'cbymezsqlqiybbjh'
+    def start_processing():
+        def process():
+            username = entry_username.get()
+            password = entry_password.get()
+            keyword = "12306"
 
-    if username == 'your_email@qq.com' or password == 'your_authorization_code':
-        print("请在代码中填写您的QQ邮箱地址和授权码。")
-        return
+            if not username or not password:
+                messagebox.showwarning("输入错误", "请填写所有字段。")
+                return
 
-    imap = login_qq_email(username, password)
+            log_message("Logging in...")
+            imap = login_qq_email(username, password)
 
-    if not imap:
-        print("登录失败，程序终止。")
-        return
+            if not imap:
+                return
 
-    keyword = '12306'
-    print(f"正在搜索包含关键词 '{keyword}' 的邮件...")
-    emails = fetch_emails_with_keyword_in_body(imap, keyword)
+            log_message("Fetching emails...")
+            emails = fetch_emails_with_keyword_in_body(imap, keyword)
 
-    print(f"总共有 {len(emails)} 封邮件包含关键词 '{keyword}'。")
+            if len(emails) > 0:
+                save_path = filedialog.asksaveasfilename(defaultextension=".txt", filetypes=[("Text files", "*.txt")])
+                if save_path:
+                    log_message("Saving emails...")
+                    save_all_emails_to_single_txt(emails, save_path)
+            else:
+                log_message(f"No emails found containing '{keyword}'")
+                messagebox.showinfo("结果", f"未找到包含 '{keyword}' 的邮件。")
 
-    if len(emails) > 0:
-        save_choice = input("是否将这些邮件保存到一个txt文件中？（y/n）：").strip().lower()
-        if save_choice == 'y':
-            save_path = './all_emails.txt'
-            save_all_emails_to_single_txt(emails, save_path)
-        else:
-            print("不保存邮件。")
-    else:
-        print(f"未找到包含 '{keyword}' 的邮件。")
+            try:
+                imap.logout()
+                log_message("Logged out.")
+            except Exception as e:
+                log_message(f"Error logging out: {e}")
+                messagebox.showerror("登出错误", f"登出时出错: {e}")
 
-    try:
-        imap.logout()
-        print("已成功登出邮箱。")
-    except Exception as e:
-        print(f"登出时出错: {e}")
+        threading.Thread(target=process).start()
 
+    root = tk.Tk()
+    root.title("QQ邮箱登录")
+
+    # Center the window
+    window_width = 400
+    window_height = 300
+    screen_width = root.winfo_screenwidth()
+    screen_height = root.winfo_screenheight()
+    position_top = int(screen_height / 2 - window_height / 2)
+    position_right = int(screen_width / 2 - window_width / 2)
+    root.geometry(f'{window_width}x{window_height}+{position_right}+{position_top}')
+
+    tk.Label(root, text="邮箱账号:").grid(row=0, column=0, padx=10, pady=5)
+    entry_username = tk.Entry(root)
+    entry_username.grid(row=0, column=1, padx=10, pady=5)
+
+    tk.Label(root, text="授权码:").grid(row=1, column=0, padx=10, pady=5)
+    entry_password = tk.Entry(root, show="*")
+    entry_password.grid(row=1, column=1, padx=10, pady=5)
+
+    tk.Button(root, text="开始处理", command=start_processing).grid(row=2, columnspan=2, pady=10)
+    global log_text
+    log_text = tk.Text(root, height=10, width=50)
+    log_text.grid(row=3, columnspan=2, padx=10, pady=5)
+
+    root.mainloop()
 
 if __name__ == "__main__":
     main()
