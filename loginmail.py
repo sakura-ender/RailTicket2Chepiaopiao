@@ -8,6 +8,7 @@ import tkinter as tk
 from tkinter import filedialog, messagebox
 import threading
 
+
 def login_qq_email(username, password):
     imap_server = 'imap.qq.com'
     try:
@@ -154,8 +155,6 @@ def log_message(message):
     log_text.see(tk.END)
 
 
-
-
 def main():
     def start_processing():
         def process():
@@ -220,6 +219,7 @@ def main():
     log_text.grid(row=3, columnspan=2, padx=10, pady=5)
 
     root.mainloop()
+
 
 if __name__ == "__main__":
     main()
