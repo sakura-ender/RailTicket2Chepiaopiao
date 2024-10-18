@@ -191,11 +191,19 @@ def main():
         return
 
     keyword = '12306'  # 需要搜索的关键词
+    print(f"正在搜索包含关键词 '{keyword}' 的邮件...")
     emails = fetch_emails_with_keyword_in_body(imap, keyword)
 
-    if emails:
-        save_path = './all_emails.txt'
-        save_all_emails_to_single_txt(emails, save_path)
+    print(f"总共有 {len(emails)} 封邮件包含关键词 '{keyword}'。")
+
+    if len(emails) > 0:
+        # 询问用户是否需要保存这些邮件
+        save_choice = input("是否将这些邮件保存到一个txt文件中？（y/n）：").strip().lower()
+        if save_choice == 'y':
+            save_path = './all_emails.txt'
+            save_all_emails_to_single_txt(emails, save_path)
+        else:
+            print("不保存邮件。")
     else:
         print(f"未找到包含 '{keyword}' 的邮件。")
 
