@@ -2,46 +2,52 @@ import imaplib
 import email
 from email.header import decode_header
 import os
-import concurrent.futures
 import time
 
 # 登录QQ邮箱
 def login_qq_email(username, password):
     imap_server = 'imap.qq.com'
-    imap = imaplib.IMAP4_SSL(imap_server)
     try:
+        imap = imaplib.IMAP4_SSL(imap_server)
         imap.login(username, password)
         print("登录成功！")
+        return imap
     except imaplib.IMAP4.error as e:
         print(f"登录失败: {e}")
         return None
-    return imap
+    except Exception as e:
+        print(f"连接到IMAP服务器时发生错误: {e}")
+        return None
 
-
-
-
+# 解码邮件标题
+def decode_mime_words(s):
+    decoded_fragments = decode_header(s)
+    return ''.join([
+        fragment.decode(encoding if encoding else 'utf-8') if isinstance(fragment, bytes) else fragment
+        for fragment, encoding in decoded_fragments
+    ])
 
 # 处理每封邮件的函数
 def process_email(email_id, imap, keyword, retries=3, delay=5):
-    for attempt in range(retries):
+    for attempt in range(1, retries + 1):
         try:
             status, msg_data = imap.fetch(email_id, '(RFC822)')
             if status == 'OK':
                 break
             else:
-                print(f"Unexpected status: {status}, retrying ({attempt + 1}/{retries})...")
+                print(f"意外的状态: {status}, 正在重试 ({attempt}/{retries})...")
         except imaplib.IMAP4.abort as e:
-            print(f"Fetch command aborted: {e}, retrying ({attempt + 1}/{retries})...")
+            print(f"Fetch命令中止: {e}, 正在重试 ({attempt}/{retries})...")
             time.sleep(delay)
         except Exception as e:
-            print(f"Unexpected error: {e}, retrying ({attempt + 1}/{retries})...")
+            print(f"发生意外错误: {e}, 正在重试 ({attempt}/{retries})...")
             time.sleep(delay)
     else:
-        print(f"Failed to fetch email {email_id} after {retries} attempts.")
+        print(f"在 {retries} 次尝试后无法获取邮件 {email_id}。")
         return None
 
     if not msg_data:
-        print(f"No message data for email {email_id}.")
+        print(f"邮件 {email_id} 没有消息数据。")
         return None
 
     for response_part in msg_data:
@@ -49,7 +55,7 @@ def process_email(email_id, imap, keyword, retries=3, delay=5):
             try:
                 msg = email.message_from_bytes(response_part[1])
             except Exception as e:
-                print(f"Error parsing email: {e}")
+                print(f"解析邮件时出错: {e}")
                 continue
 
             # 获取邮件正文
@@ -59,29 +65,48 @@ def process_email(email_id, imap, keyword, retries=3, delay=5):
                     content_type = part.get_content_type()
                     content_disposition = str(part.get("Content-Disposition"))
 
-                    if "attachment" not in content_disposition:
-                        try:
-                            charset = part.get_content_charset() or 'utf-8'  # 获取邮件的编码格式
-                            body = part.get_payload(decode=True).decode(charset)
-                        except UnicodeDecodeError as e:
-                            print(f"解码错误: {e}，尝试使用不同编码解码")
-                            continue
+                    if "attachment" not in content_disposition and content_type.startswith("text/"):
+                        payload = part.get_payload(decode=True)
+                        if payload:
+                            # 尝试多种编码
+                            for charset in ['utf-8', 'gbk', 'gb2312', 'iso-8859-1']:
+                                try:
+                                    body = payload.decode(charset).strip()
+                                    break
+                                except UnicodeDecodeError:
+                                    continue
+                            else:
+                                print("无法解码邮件正文。")
             else:
-                try:
-                    charset = msg.get_content_charset() or 'utf-8'
-                    body = msg.get_payload(decode=True).decode(charset)
-                except UnicodeDecodeError as e:
-                    print(f"解码错误: {e}，尝试使用不同编码解码")
-                    continue
+                payload = msg.get_payload(decode=True)
+                if payload:
+                    for charset in ['utf-8', 'gbk', 'gb2312', 'iso-8859-1']:
+                        try:
+                            body = payload.decode(charset).strip()
+                            break
+                        except UnicodeDecodeError:
+                            continue
+                    else:
+                        print("无法解码邮件正文。")
 
             # 检查正文是否包含关键词
             if body and keyword in body:
                 return msg
     return None
-# 获取邮件列表并并行处理
+
+# 获取邮件列表并处理
 def fetch_emails_with_keyword_in_body(imap, keyword):
-    imap.select("inbox")
-    status, messages = imap.search(None, 'ALL')
+    try:
+        imap.select("inbox")
+    except Exception as e:
+        print(f"无法选择收件箱: {e}")
+        return []
+
+    try:
+        status, messages = imap.search(None, 'ALL')
+    except Exception as e:
+        print(f"搜索邮件时出错: {e}")
+        return []
 
     if status != "OK":
         print("获取邮件失败")
@@ -92,66 +117,80 @@ def fetch_emails_with_keyword_in_body(imap, keyword):
 
     matching_emails = []
 
-    # 使用线程池并行处理邮件
-    with concurrent.futures.ThreadPoolExecutor() as executor:
-        futures = [executor.submit(process_email, email_id, imap, keyword) for email_id in email_ids]
-
-        for future in concurrent.futures.as_completed(futures):
-            result = future.result()
-            if result:
-                matching_emails.append(result)
-                print("找到匹配的邮件，包含关键词")
+    for email_id in email_ids:
+        result = process_email(email_id, imap, keyword)
+        if result:
+            matching_emails.append(result)
+            print(f"找到匹配的邮件(ID: {email_id.decode()}), 包含关键词 '{keyword}'。")
 
     print(f"总共找到 {len(matching_emails)} 封正文中包含 '{keyword}' 的邮件。")
     return matching_emails
 
-
 # 保存所有符合条件的邮件到一个txt文件
 def save_all_emails_to_single_txt(emails, save_path):
-    with open(save_path, 'w', encoding='utf-8') as f:
-        for i, msg in enumerate(emails, 1):
-            subject = msg["Subject"]
-            f.write(f"\n--- 第 {i} 封邮件 ---\n")
-            f.write(f"标题: {subject}\n")
+    try:
+        with open(save_path, 'w', encoding='utf-8') as f:
+            for i, msg in enumerate(emails, 1):
+                subject = msg.get("Subject", "")
+                decoded_subject = decode_mime_words(subject)
+                f.write(f"\n--- 第 {i} 封邮件 ---\n")
+                f.write(f"标题: {decoded_subject}\n")
 
-            body = None
-            if msg.is_multipart():
-                for part in msg.walk():
-                    content_type = part.get_content_type()
-                    content_disposition = str(part.get("Content-Disposition"))
-                    if "attachment" not in content_disposition:
-                        try:
-                            charset = part.get_content_charset() or 'utf-8'
-                            body = part.get_payload(decode=True).decode(charset)
-                        except UnicodeDecodeError as e:
-                            print(f"解码错误: {e}，跳过此部分")
-                            continue
-            else:
-                try:
-                    charset = msg.get_content_charset() or 'utf-8'
-                    body = msg.get_payload(decode=True).decode(charset)
-                except UnicodeDecodeError as e:
-                    print(f"解码错误: {e}，跳过此部分")
-                    continue
+                body = None
+                if msg.is_multipart():
+                    for part in msg.walk():
+                        content_type = part.get_content_type()
+                        content_disposition = str(part.get("Content-Disposition"))
+                        if "attachment" not in content_disposition and content_type.startswith("text/"):
+                            payload = part.get_payload(decode=True)
+                            if payload:
+                                for charset in ['utf-8', 'gbk', 'gb2312', 'iso-8859-1']:
+                                    try:
+                                        body = payload.decode(charset).strip()
+                                        break
+                                    except UnicodeDecodeError:
+                                        continue
+                                else:
+                                    print("无法解码邮件正文，跳过此部分。")
+                else:
+                    payload = msg.get_payload(decode=True)
+                    if payload:
+                        for charset in ['utf-8', 'gbk', 'gb2312', 'iso-8859-1']:
+                            try:
+                                body = payload.decode(charset).strip()
+                                break
+                            except UnicodeDecodeError:
+                                continue
+                        else:
+                            print("无法解码邮件正文，跳过此部分。")
 
-            f.write(f"正文:\n{body}\n")
-            f.write("\n--- 结束 ---\n")
-            print(f"正在导出第 {i} 封邮件到总文件。")
-    print(f"所有邮件已导出到 {save_path}")
-
+                if body:
+                    f.write(f"正文:\n{body}\n")
+                else:
+                    f.write("正文: 无法解码或为空。\n")
+                f.write("\n--- 结束 ---\n")
+                print(f"正在导出第 {i} 封邮件到 {save_path}。")
+        print(f"所有邮件已导出到 {save_path}")
+    except Exception as e:
+        print(f"保存邮件到文件时出错: {e}")
 
 # 主程序
 def main():
-    username = '570802322@qq.com'
-    password = 'kkgtbajebeclbgaa'
+    # 请填入您的完整QQ邮箱地址和授权码
+    username = '570802322@qq.com'  # 替换为你的QQ邮箱地址
+    password = 'cbymezsqlqiybbjh'  # 替换为你的QQ邮箱授权码
+
+    if username == 'your_email@qq.com' or password == 'your_authorization_code':
+        print("请在代码中填写您的QQ邮箱地址和授权码。")
+        return
 
     imap = login_qq_email(username, password)
 
     if not imap:
-        print("登录失败，程序终止")
+        print("登录失败，程序终止。")
         return
 
-    keyword = '12306'
+    keyword = '12306'  # 需要搜索的关键词
     emails = fetch_emails_with_keyword_in_body(imap, keyword)
 
     if emails:
@@ -160,8 +199,11 @@ def main():
     else:
         print(f"未找到包含 '{keyword}' 的邮件。")
 
-    imap.logout()
-
+    try:
+        imap.logout()
+        print("已成功登出邮箱。")
+    except Exception as e:
+        print(f"登出时出错: {e}")
 
 if __name__ == "__main__":
     main()
