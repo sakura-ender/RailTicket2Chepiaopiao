@@ -3,6 +3,7 @@ import email
 from email.header import decode_header
 import os
 import time
+from bs4 import BeautifulSoup  # 导入BeautifulSoup库
 
 # 登录QQ邮箱
 def login_qq_email(username, password):
@@ -71,7 +72,10 @@ def process_email(email_id, imap, keyword, retries=3, delay=5):
                             # 尝试多种编码
                             for charset in ['utf-8', 'gbk', 'gb2312', 'iso-8859-1']:
                                 try:
-                                    body = payload.decode(charset).strip()
+                                    decoded_payload = payload.decode(charset).strip()
+                                    # 使用BeautifulSoup解析HTML并提取纯文本
+                                    soup = BeautifulSoup(decoded_payload, 'html.parser')
+                                    body = soup.get_text(separator='\n')  # 使用换行符分隔不同的文本块
                                     break
                                 except UnicodeDecodeError:
                                     continue
@@ -82,7 +86,9 @@ def process_email(email_id, imap, keyword, retries=3, delay=5):
                 if payload:
                     for charset in ['utf-8', 'gbk', 'gb2312', 'iso-8859-1']:
                         try:
-                            body = payload.decode(charset).strip()
+                            decoded_payload = payload.decode(charset).strip()
+                            soup = BeautifulSoup(decoded_payload, 'html.parser')
+                            body = soup.get_text(separator='\n')
                             break
                         except UnicodeDecodeError:
                             continue
@@ -146,7 +152,9 @@ def save_all_emails_to_single_txt(emails, save_path):
                             if payload:
                                 for charset in ['utf-8', 'gbk', 'gb2312', 'iso-8859-1']:
                                     try:
-                                        body = payload.decode(charset).strip()
+                                        decoded_payload = payload.decode(charset).strip()
+                                        soup = BeautifulSoup(decoded_payload, 'html.parser')
+                                        body = soup.get_text(separator='\n')
                                         break
                                     except UnicodeDecodeError:
                                         continue
@@ -157,7 +165,9 @@ def save_all_emails_to_single_txt(emails, save_path):
                     if payload:
                         for charset in ['utf-8', 'gbk', 'gb2312', 'iso-8859-1']:
                             try:
-                                body = payload.decode(charset).strip()
+                                decoded_payload = payload.decode(charset).strip()
+                                soup = BeautifulSoup(decoded_payload, 'html.parser')
+                                body = soup.get_text(separator='\n')
                                 break
                             except UnicodeDecodeError:
                                 continue
