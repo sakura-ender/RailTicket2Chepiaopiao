@@ -9,8 +9,7 @@ from tkinter import filedialog, messagebox
 import threading
 
 
-def login_qq_email(username, password):
-    imap_server = 'imap.qq.com'
+def login_email(username, password, imap_server):
     try:
         imap = imaplib.IMAP4_SSL(imap_server)
         imap.login(username, password)
@@ -177,8 +176,14 @@ def main():
                     messagebox.showwarning("输入错误", "请填写所有字段。")
                     return
 
+                selected_provider = email_provider.get()
+                if selected_provider == "custom":
+                    imap_server = entry_custom_imap.get()
+                else:
+                    imap_server = selected_provider
+
                 log_message("Logging in...")
-                imap = login_qq_email(username, password)
+                imap = login_email(username, password, imap_server)
 
                 if not imap:
                     return
@@ -208,11 +213,11 @@ def main():
             start_button.config(text="暂停")
 
     root = tk.Tk()
-    root.title("QQ邮箱登录")
+    root.title("邮箱登录")
 
     # Center the window
     window_width = 400
-    window_height = 300
+    window_height = 400
     screen_width = root.winfo_screenwidth()
     screen_height = root.winfo_screenheight()
     position_top = int(screen_height / 2 - window_height / 2)
@@ -227,12 +232,32 @@ def main():
     entry_password = tk.Entry(root, show="*")
     entry_password.grid(row=1, column=1, padx=10, pady=5)
 
+    email_provider = tk.StringVar(value="imap.qq.com")
+    tk.Radiobutton(root, text="QQ邮箱", variable=email_provider, value="imap.qq.com").grid(row=2, column=0, padx=10, pady=5)
+    tk.Radiobutton(root, text="163邮箱", variable=email_provider, value="imap.163.com").grid(row=2, column=1, padx=10, pady=5)
+    tk.Radiobutton(root, text="Outlook不支持）", variable=email_provider, value="imap-mail.outlook.com").grid(row=3, column=0, padx=10, pady=5)
+    tk.Radiobutton(root, text="Gmail", variable=email_provider, value="imap.gmail.com").grid(row=3, column=1, padx=10, pady=5)
+    tk.Radiobutton(root, text="自定义", variable=email_provider, value="custom").grid(row=4, column=0, padx=10, pady=5)
+
+    tk.Label(root, text="自定义IMAP服务器:").grid(row=5, column=0, padx=10, pady=5)
+    entry_custom_imap = tk.Entry(root)
+    entry_custom_imap.grid(row=5, column=1, padx=10, pady=5)
+    entry_custom_imap.config(state=tk.DISABLED)
+
+    def toggle_custom_imap(*args):
+        if email_provider.get() == "custom":
+            entry_custom_imap.config(state=tk.NORMAL)
+        else:
+            entry_custom_imap.config(state=tk.DISABLED)
+
+    email_provider.trace("w", toggle_custom_imap)
+
     start_button = tk.Button(root, text="开始处理", command=start_processing)
-    start_button.grid(row=2, columnspan=2, pady=10)
+    start_button.grid(row=6, columnspan=2, pady=10)
 
     global log_text
     log_text = tk.Text(root, height=10, width=50)
-    log_text.grid(row=3, columnspan=2, padx=10, pady=5)
+    log_text.grid(row=7, columnspan=2, padx=10, pady=5)
 
     root.mainloop()
 
