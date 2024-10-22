@@ -8,6 +8,8 @@ import tkinter as tk
 from tkinter import filedialog, messagebox
 import threading
 import re
+import subprocess
+import platform
 
 is_paused = False
 matching_emails = []
@@ -155,7 +157,12 @@ def save_all_emails_to_single_txt(emails, save_path):
         log_message(f"所有邮件已导出到 {save_path}")
         messagebox.showinfo("完成", f"所有邮件已导出到 {save_path}")
         folder_path = os.path.dirname(save_path)
-        os.startfile(folder_path)
+        if platform.system() == "Windows":
+            os.startfile(folder_path)
+        elif platform.system() == "Darwin":  # macOS
+            subprocess.call(["open", folder_path])
+        else:  # Linux
+            subprocess.call(["xdg-open", folder_path])
     except Exception as e:
         log_message(f"Error saving emails: {e}")
         messagebox.showerror("保存错误", f"保存邮件到文件时出错: {e}")
@@ -210,7 +217,6 @@ def main():
 
                 log_message("Fetching emails...")
                 emails = fetch_emails_with_keyword_in_body(imap, keyword)
-
                 if len(emails) > 0:
                     save_path = filedialog.asksaveasfilename(defaultextension=".txt",
                                                              filetypes=[("Text files", "*.txt")])
