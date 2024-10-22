@@ -7,6 +7,10 @@ from bs4 import BeautifulSoup
 import tkinter as tk
 from tkinter import filedialog, messagebox
 import threading
+import re
+
+is_paused = False
+matching_emails = []
 
 
 def login_email(username, password, imap_server):
@@ -51,20 +55,25 @@ def extract_body_from_msg(msg):
                 if payload:
                     body = decode_payload(payload)
                     if body and '<' in body and '>' in body:
-                        text = BeautifulSoup(body, 'html.parser').get_text(separator='\n')
-                        return '\n'.join([line.strip() for line in text.splitlines() if line.strip()])
+                        text = BeautifulSoup(body, 'html.parser').get_text()
+                        text = re.sub(r'\s+', ' ', text).strip()
+                        return text
     else:
         payload = msg.get_payload(decode=True)
         if payload:
             body = decode_payload(payload)
             if body and '<' in body and '>' in body:
-                text = BeautifulSoup(body, 'html.parser').get_text(separator='\n')
-                return '\n'.join([line.strip() for line in text.splitlines() if line.strip()])
+                text = BeautifulSoup(body, 'html.parser').get_text()
+                text = re.sub(r'\s+', ' ', text).strip()
+                return text
     return None
 
 
 def process_email(email_id, imap, keyword, retries=3, delay=5):
+    global is_paused
     for attempt in range(1, retries + 1):
+        if is_paused:
+            return None
         try:
             status, msg_data = imap.fetch(email_id, '(RFC822)')
             if status == 'OK':
@@ -96,6 +105,7 @@ def process_email(email_id, imap, keyword, retries=3, delay=5):
 
 
 def fetch_emails_with_keyword_in_body(imap, keyword):
+    global matching_emails
     try:
         imap.select("inbox")
     except Exception as e:
@@ -117,6 +127,8 @@ def fetch_emails_with_keyword_in_body(imap, keyword):
     matching_emails = []
 
     for email_id in email_ids:
+        if is_paused:
+            break
         result = process_email(email_id, imap, keyword)
         if result:
             matching_emails.append(result)
@@ -150,24 +162,32 @@ def save_all_emails_to_single_txt(emails, save_path):
 
 
 def log_message(message):
-    global log_text
+    global log_text, email_count_label
     log_text.insert(tk.END, message + '\n')
     log_text.see(tk.END)
+    email_count_label.config(text=f"当前匹配的邮件数: {len(matching_emails)}")
 
 
 def main():
-    global is_processing
+    global is_processing, is_paused, matching_emails, email_count_label
     is_processing = False
 
     def start_processing():
-        global is_processing
+        global is_processing, is_paused, matching_emails
         if is_processing:
-            # 如果正在处理，点击按钮将暂停处理并退出程序
-            messagebox.showinfo("暂停", "程序已暂停。")
+            is_paused = True
+            if matching_emails:
+                save_path = filedialog.asksaveasfilename(defaultextension=".txt",
+                                                         filetypes=[("Text files", "*.txt")])
+                if save_path:
+                    log_message("Saving emails...")
+                    save_all_emails_to_single_txt(matching_emails, save_path)
+            messagebox.showinfo("暂停", "程序已暂停并导出当前匹配的邮件。")
             root.quit()
         else:
-            # 如果未在处理，点击按钮将开始处理
             def process():
+                global is_paused, matching_emails
+                is_paused = False
                 username = entry_username.get()
                 password = entry_password.get()
                 keyword = "12306"
@@ -210,12 +230,11 @@ def main():
 
             threading.Thread(target=process).start()
             is_processing = True
-            start_button.config(text="暂停")
+            start_button.config(text="中途暂停并导出目前的邮件(不推荐)")
 
     root = tk.Tk()
     root.title("邮箱登录")
 
-    # Center the window
     window_width = 400
     window_height = 400
     screen_width = root.winfo_screenwidth()
@@ -233,10 +252,16 @@ def main():
     entry_password.grid(row=1, column=1, padx=10, pady=5)
 
     email_provider = tk.StringVar(value="imap.qq.com")
-    tk.Radiobutton(root, text="QQ邮箱", variable=email_provider, value="imap.qq.com").grid(row=2, column=0, padx=10, pady=5)
-    tk.Radiobutton(root, text="163邮箱", variable=email_provider, value="imap.163.com").grid(row=2, column=1, padx=10, pady=5)
-    tk.Radiobutton(root, text="Outlook不支持）", variable=email_provider, value="imap-mail.outlook.com").grid(row=3, column=0, padx=10, pady=5)
-    tk.Radiobutton(root, text="Gmail", variable=email_provider, value="imap.gmail.com").grid(row=3, column=1, padx=10, pady=5)
+    tk.Radiobutton(root, text="QQ邮箱", variable=email_provider, value="imap.qq.com").grid(row=2, column=0, padx=10,
+                                                                                           pady=5)
+    tk.Radiobutton(root, text="163邮箱", variable=email_provider, value="imap.163.com").grid(row=2, column=1, padx=10,
+                                                                                             pady=5)
+    tk.Radiobutton(root, text="Outlook（不支持）", variable=email_provider, value="imap-mail.outlook.com").grid(row=3,
+                                                                                                              column=0,
+                                                                                                              padx=10,
+                                                                                                              pady=5)
+    tk.Radiobutton(root, text="Gmail", variable=email_provider, value="imap.gmail.com").grid(row=3, column=1, padx=10,
+                                                                                             pady=5)
     tk.Radiobutton(root, text="自定义", variable=email_provider, value="custom").grid(row=4, column=0, padx=10, pady=5)
 
     tk.Label(root, text="自定义IMAP服务器:").grid(row=5, column=0, padx=10, pady=5)
@@ -255,9 +280,12 @@ def main():
     start_button = tk.Button(root, text="开始处理", command=start_processing)
     start_button.grid(row=6, columnspan=2, pady=10)
 
+    email_count_label = tk.Label(root, text="当前匹配的邮件数: 0")
+    email_count_label.grid(row=7, columnspan=2, pady=5)
+
     global log_text
     log_text = tk.Text(root, height=10, width=50)
-    log_text.grid(row=7, columnspan=2, padx=10, pady=5)
+    log_text.grid(row=8, columnspan=2, padx=10, pady=5)
 
     root.mainloop()
 
