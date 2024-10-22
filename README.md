@@ -12,11 +12,18 @@
    **同时记住将收取选项选为“全部”，防止无法收取到所有邮件**；
 
 你可能会用到的：
-gmail专用密码(开启两步验证后需要的)https://myaccount.google.com/u/6/apppasswords?gar=1
+gmail专用密码(开启两步验证后需要的)
+https://myaccount.google.com/u/6/apppasswords?gar=1
+
 注:outlook因为不想琢磨Oauth2.0，故不支持
 
-2**下载并运行 RailTicket2Chepiaopiao.exe**  
-在release中下载运行最新版本的 `RailTicket2Chepiaopiao.exe`并打开，输入邮箱地址和授权码，点击开始处理，等待程序运行完毕，导出完毕会弹出保存路径，自己选择路径简单命名即可；运行期间再次点击则为保存现在已经查询到的邮件（不推荐）；
+2**下载并运行 RailTicket2Chepiaopiao**  
+windows在release中下载运行最新版本的 `RailTicket2Chepiaopiao.exe`并打开;
+
+MacOS在release中下载运行最新版本的 `RailTicket2Chepiaopiao.app.zip`并打开，如果提示无法打开
+“RailTicket2Chepiaopiao”，因为Apple无法检查其是否包含恶意软件，到系统设置 >隐私与安全性，滑到底部“安全性”部分，点击“已阻止'RailTicket2Chepiaopiao.app'以保护Mac”右侧的“仍要打开“按钮。
+
+接下来输入邮箱地址和授权码，点击开始处理，等待程序运行完毕，导出完毕会弹出保存路径，自己选择路径简单命名即可；运行期间再次点击则为保存现在已经查询到的邮件（不推荐）；
 
 ![](.README_images/QQ_1729586338316.png)
 
