@@ -5,11 +5,13 @@ import os
 import time
 from bs4 import BeautifulSoup
 import tkinter as tk
-from tkinter import filedialog, messagebox
+from tkinter import filedialog, messagebox,ttk
 import threading
 import re
 import subprocess
 import platform
+from email import policy
+from email.parser import BytesParser
 
 is_paused = False
 matching_emails = []
@@ -216,13 +218,13 @@ def main():
                 else:
                     imap_server = selected_provider
 
-                log_message("Logging in...")
+                log_message("正在登录...")
                 imap = login_email(username, password, imap_server)
 
                 if not imap:
                     return
 
-                log_message("Fetching emails...")
+                log_message("正在获取邮件...")
                 emails = fetch_emails_with_keyword_in_body(imap, keyword)
                 if len(emails) > 0:
                     save_path = filedialog.asksaveasfilename(defaultextension=".txt",
@@ -245,6 +247,40 @@ def main():
             is_processing = True
             start_button.config(text="中途暂停并导出目前的邮件(不推荐)")
 
+    def select_folder():
+        folder_path = filedialog.askdirectory()
+        if folder_path:
+            log_message(f"Selected folder: {folder_path}")
+            process_eml_files(folder_path)
+
+    def process_eml_files(folder_path):
+        eml_files = [os.path.join(folder_path, f) for f in os.listdir(folder_path) if f.endswith('.eml')]
+        if not eml_files:
+            messagebox.showwarning("无文件", "所选文件夹中没有EML文件！")
+            return
+
+        log_message(f"发现 {len(eml_files)} 个EML文件，开始解析...")
+        emails = []
+        for eml_file in eml_files:
+            try:
+                with open(eml_file, 'rb') as f:
+                    msg = BytesParser(policy=policy.default).parse(f)
+                    emails.append(msg)
+                    log_message(f"已解析: {os.path.basename(eml_file)}")
+            except Exception as e:
+                log_message(f"解析失败: {eml_file} - {str(e)}")
+
+        if emails:
+            save_path = filedialog.asksaveasfilename(
+                defaultextension=".txt",
+                filetypes=[("Text files", "*.txt")],
+                title="保存解析结果"
+            )
+            if save_path:
+                save_all_emails_to_single_txt(emails, save_path)
+        else:
+            messagebox.showinfo("结果", "未找到有效邮件内容")
+
     root = tk.Tk()
     root.title("邮箱登录")
 
@@ -256,29 +292,33 @@ def main():
     position_right = int(screen_width / 2 - window_width / 2)
     root.geometry(f'{window_width}x{window_height}+{position_right}+{position_top}')
 
-    tk.Label(root, text="邮箱账号:").grid(row=0, column=0, padx=10, pady=5)
-    entry_username = tk.Entry(root)
+    notebook = ttk.Notebook(root)
+    notebook.pack(expand=True, fill='both')
+
+    login_frame = ttk.Frame(notebook)
+    folder_frame = ttk.Frame(notebook)
+
+    notebook.add(login_frame, text="登录")
+    notebook.add(folder_frame, text="选择文件夹")
+
+    # 登录界面
+    tk.Label(login_frame, text="邮箱账号:").grid(row=0, column=0, padx=10, pady=5)
+    entry_username = tk.Entry(login_frame)
     entry_username.grid(row=0, column=1, padx=10, pady=5)
 
-    tk.Label(root, text="授权码:").grid(row=1, column=0, padx=10, pady=5)
-    entry_password = tk.Entry(root, show="*")
+    tk.Label(login_frame, text="授权码:").grid(row=1, column=0, padx=10, pady=5)
+    entry_password = tk.Entry(login_frame, show="*")
     entry_password.grid(row=1, column=1, padx=10, pady=5)
 
     email_provider = tk.StringVar(value="imap.qq.com")
-    tk.Radiobutton(root, text="QQ邮箱", variable=email_provider, value="imap.qq.com").grid(row=2, column=0, padx=10,
-                                                                                           pady=5)
-    tk.Radiobutton(root, text="163邮箱", variable=email_provider, value="imap.163.com").grid(row=2, column=1, padx=10,
-                                                                                             pady=5)
-    tk.Radiobutton(root, text="Outlook（不支持）", variable=email_provider, value="imap-mail.outlook.com").grid(row=3,
-                                                                                                              column=0,
-                                                                                                              padx=10,
-                                                                                                              pady=5)
-    tk.Radiobutton(root, text="Gmail", variable=email_provider, value="imap.gmail.com").grid(row=3, column=1, padx=10,
-                                                                                             pady=5)
-    tk.Radiobutton(root, text="自定义", variable=email_provider, value="custom").grid(row=4, column=0, padx=10, pady=5)
+    tk.Radiobutton(login_frame, text="QQ邮箱", variable=email_provider, value="imap.qq.com").grid(row=2, column=0, padx=10, pady=5)
+    tk.Radiobutton(login_frame, text="163邮箱", variable=email_provider, value="imap.163.com").grid(row=2, column=1, padx=10, pady=5)
+    tk.Radiobutton(login_frame, text="Outlook（不支持）", variable=email_provider, value="imap-mail.outlook.com").grid(row=3, column=0, padx=10, pady=5)
+    tk.Radiobutton(login_frame, text="Gmail", variable=email_provider, value="imap.gmail.com").grid(row=3, column=1, padx=10, pady=5)
+    tk.Radiobutton(login_frame, text="自定义", variable=email_provider, value="custom").grid(row=4, column=0, padx=10, pady=5)
 
-    tk.Label(root, text="自定义IMAP服务器:").grid(row=5, column=0, padx=10, pady=5)
-    entry_custom_imap = tk.Entry(root)
+    tk.Label(login_frame, text="自定义IMAP服务器:").grid(row=5, column=0, padx=10, pady=5)
+    entry_custom_imap = tk.Entry(login_frame)
     entry_custom_imap.grid(row=5, column=1, padx=10, pady=5)
     entry_custom_imap.config(state=tk.DISABLED)
 
@@ -290,16 +330,27 @@ def main():
 
     email_provider.trace("w", toggle_custom_imap)
 
-    start_button = tk.Button(root, text="开始处理", command=start_processing)
+    start_button = tk.Button(login_frame, text="开始处理", command=start_processing)
     start_button.grid(row=6, columnspan=2, pady=10)
 
-    email_count_label = tk.Label(root, text="当前匹配的邮件数: 0")
+    email_count_label = tk.Label(login_frame, text="当前匹配的邮件数: 0")
     email_count_label.grid(row=7, columnspan=2, pady=5)
 
     global log_text
-    log_text = tk.Text(root, height=10, width=50)
+    log_text = tk.Text(login_frame, height=10, width=50)
     log_text.grid(row=8, columnspan=2, padx=10, pady=5)
 
+    # 文件夹选择界面
+    select_button = tk.Button(folder_frame, text="选择文件夹", command=select_folder)
+    select_button.pack(pady=20)
+    # 登录界面增加说明
+    login_desc = ttk.Label(login_frame, text="支持QQ/163邮箱自动登录，其他邮箱请使用右侧标签页手动处理")
+    login_desc.grid(row=0, columnspan=2, pady=5)
+
+    # 文件夹选择界面增加说明
+    folder_desc = ttk.Label(folder_frame,
+                            text="适用于不支持IMAP登录的邮箱（如Outlook）\n请先在邮箱客户端导出12306邮件的EML文件到本地文件夹")
+    folder_desc.pack(pady=10)
     root.mainloop()
 
 
