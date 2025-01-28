@@ -17,8 +17,15 @@ matching_emails = []
 
 def login_email(username, password, imap_server):
     try:
+        imaplib.Commands['ID'] = ('AUTH')
         imap = imaplib.IMAP4_SSL(imap_server)
         imap.login(username, password)
+
+        if imap_server == 'imap.163.com':
+            args = ("name", "myclient", "contact", username, "version", "1.0.0", "vendor", "myclient")
+            typ, dat = imap._simple_command('ID', '("' + '" "'.join(args) + '")')
+            imap._untagged_response(typ, dat, 'ID')
+
         return imap
     except imaplib.IMAP4.error as e:
         log_message(f"Login failed: {e}")
