@@ -36,6 +36,15 @@ def log_message(message):
         log_text.see(tk.END)
     if email_count_label:
         email_count_label.config(text=f"当前匹配的邮件数: {len(matching_emails)}")
+log_text_eml = None
+def log_eml_message(message):
+    global log_text_eml,email_count_label
+    print(message)
+    if log_text_eml:
+        log_text_eml.insert(tk.END, message + '\n')
+        log_text_eml.see(tk.END)
+    if email_count_label:
+        email_count_label.config(text=f"当前匹配的邮件数: {len(matching_emails)}")
 
 # ========== 以下是 IMAP 登录所需的部分 ==========
 def login_email(username, password, imap_server):
@@ -277,16 +286,16 @@ def process_eml_files(folder_path):
         messagebox.showwarning("无文件", "所选文件夹中没有EML文件！")
         return
 
-    log_message(f"发现 {len(eml_files)} 个EML文件，开始解析...")
+    log_eml_message(f"发现 {len(eml_files)} 个EML文件，开始解析...")
     emails = []
     for eml_file in eml_files:
         try:
             with open(eml_file, 'rb') as f:
                 msg = BytesParser(policy=policy.default).parse(f)
                 emails.append(msg)
-                log_message(f"已解析: {os.path.basename(eml_file)}")
+                log_eml_message(f"已解析: {os.path.basename(eml_file)}")
         except Exception as e:
-            log_message(f"解析失败: {eml_file} - {str(e)}")
+            log_eml_message(f"解析失败: {eml_file} - {str(e)}")
 
     if emails:
         save_path = filedialog.asksaveasfilename(
@@ -329,7 +338,7 @@ def fetch_outlook_button_click():
 def select_folder():
         folder_path = filedialog.askdirectory()
         if folder_path:
-            log_message(f"Selected folder: {folder_path}")
+            log_eml_message(f"Selected folder: {folder_path}")
             process_eml_files(folder_path)
 
 
@@ -337,7 +346,7 @@ def select_folder():
 # ...（前面的导入和全局变量保持不变）
 
 def main():
-    global is_processing, is_paused, matching_emails, email_count_label, log_text, root
+    global is_processing, is_paused, matching_emails, email_count_label, log_text, root,log_text_eml
 
     is_processing = False
     root = tk.Tk()
@@ -496,6 +505,8 @@ def main():
 
     select_btn = ttk.Button(folder_frame, text="选择文件夹", command=select_folder)
     select_btn.pack(pady=10)
+    log_text_eml = tk.Text(folder_frame, height=12, width=50)
+    log_text_eml.pack(pady=10)
 
     # ==================== 关于界面 ====================
     about_text = """
