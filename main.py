@@ -53,12 +53,14 @@ def login_email(username, password, imap_server):
         imap = imaplib.IMAP4_SSL(imap_server)
         imap.login(username, password)
         # 163邮箱需要发送 ID 命令来标识客户端信息
-        if imap_server == 'imap.163.com':
+        if imap_server == 'imap.163.com' or imap_server == 'imap.126.com':
             args = ("name", "myclient", "contact", username, "version", "1.0.0", "vendor", "myclient")
             typ, dat = imap._simple_command('ID', '("' + '" "'.join(args) + '")')
             imap._untagged_response(typ, dat, 'ID')
 
         return imap
+
+
 
     except imaplib.IMAP4.error as e:
         log_message(f"Login failed: {e}")
@@ -211,7 +213,7 @@ def save_all_emails_to_single_txt(emails, save_path):
 def fetch_outlook_emails_with_keyword(keyword="12306"):
     """
     1. 使用 InteractiveBrowserCredential 登录 Microsoft 帐号并获取 token。
-    2. 调用 Graph API 获取邮件并筛选出包含 keyword 的邮件。
+    2. 调用 Graph API 分页获取所有邮件并筛选出包含 keyword 的邮件。
     3. 返回这些邮件（格式尽量与 IMAP 返回相似，方便后续统一保存）。
     """
     global matching_emails
@@ -222,36 +224,41 @@ def fetch_outlook_emails_with_keyword(keyword="12306"):
         credential = InteractiveBrowserCredential(
             client_id=CLIENT_ID,
             tenant_id=TENANT_ID,
-            redirect_uri="http://localhost:8400"  # 这里与 Azure 注册的重定向 URI 保持一致
+            redirect_uri="http://localhost:8400"
         )
         token = credential.get_token(*SCOPES).token
         log_message("获取 Outlook 令牌成功，正在获取邮件...")
 
-        # 调用 Microsoft Graph API 获取邮件
         headers = {
             'Authorization': f'Bearer {token}',
             'Content-Type': 'application/json'
         }
-        # 这里拉取前 50 封，扩展可加 $top 参数，或分页获取
-        url = "https://graph.microsoft.com/v1.0/me/messages?$select=id,subject,body,from&$top=50"
-        response = requests.get(url, headers=headers)
-        data = response.json()
 
-        messages = data.get("value", [])
-        log_message(f"从 Outlook 获取到 {len(messages)} 封邮件，开始筛选包含 '{keyword}' 的邮件...")
+        # 分页获取所有邮件
+        messages = []
+        url = "https://graph.microsoft.com/v1.0/me/messages?$select=id,subject,body,from&$top=1000"  # 单次最大数量
+        while url:
+            response = requests.get(url, headers=headers)
+            if response.status_code != 200:
+                log_message(f"获取邮件失败，状态码：{response.status_code}")
+                break
+            data = response.json()
+            current_page_messages = data.get("value", [])
+            messages.extend(current_page_messages)
+            log_message(f"已获取 {len(current_page_messages)} 封邮件，累计总数：{len(messages)}")
+            url = data.get('@odata.nextLink', None)  # 处理分页
+
+        log_message(f"从 Outlook 共获取到 {len(messages)} 封邮件，开始筛选包含 '{keyword}' 的邮件...")
 
         for msg_item in messages:
-            subject = msg_item.get("subject", "")
             body_content = msg_item.get("body", {}).get("content", "")
-            sender = msg_item.get("from", {}).get("emailAddress", {}).get("address", "")
-            # 如果正文中包含关键词，则将该条“伪装”为 email.message.Message 对象
-            # 以便和 IMAP 返回的 msg 结构一致
             if keyword in body_content:
-                # 构造一个最简单的 email.message.Message 用来保存最终导出
+                subject = msg_item.get("subject", "")
+                sender = msg_item.get("from", {}).get("emailAddress", {}).get("address", "")
+
                 msg = email.message.EmailMessage()
                 msg["Subject"] = subject
                 msg["From"] = sender
-                # 将 body_content 转成 HTML 或纯文本再解析，这里直接当作纯文本
                 msg.set_content(body_content)
                 matching_emails.append(msg)
 
@@ -292,73 +299,23 @@ def process_eml_files(folder_path):
     else:
         messagebox.showinfo("结果", "未找到有效邮件内容")
 
-# ========== 主窗口函数 ==========
-def main():
-    global is_processing, is_paused, matching_emails, email_count_label, log_text
+outlook_button_pressed = False
+def fetch_outlook_button_click():
+    """点击按钮后直接触发 Outlook 流程。"""
+    global matching_emails,outlook_button_pressed
 
-    is_processing = False
-    root = tk.Tk()
-    root.title("邮箱登录与邮件处理")
+    if outlook_button_pressed:
+        log_message("请勿重复登录，程序即将退出....")
+        root.update()
+        time.sleep(1)
+        os._exit(0)
 
-    window_width = 550
-    window_height = 450
-    screen_width = root.winfo_screenwidth()
-    screen_height = root.winfo_screenheight()
-    position_top = int(screen_height / 2 - window_height / 2)
-    position_right = int(screen_width / 2 - window_width / 2)
-    root.geometry(f'{window_width}x{window_height}+{position_right}+{position_top}')
 
-    notebook = ttk.Notebook(root)
-    notebook.pack(expand=True, fill='both')
-
-    # 两个主要的 Tab 页
-    login_frame = ttk.Frame(notebook)
-    folder_frame = ttk.Frame(notebook)
-
-    notebook.add(login_frame, text="登录(自动获取)")
-    notebook.add(folder_frame, text="选择文件夹(EML)")
-
-    # ==================== 登录界面布局 ====================
-
-    # 邮箱账号、授权码
-    tk.Label(login_frame, text="邮箱账号:").grid(row=0, column=0, padx=10, pady=5, sticky='e')
-    entry_username = tk.Entry(login_frame)
-    entry_username.grid(row=0, column=1, padx=10, pady=5)
-
-    tk.Label(login_frame, text="授权码:").grid(row=1, column=0, padx=10, pady=5, sticky='e')
-    entry_password = tk.Entry(login_frame, show="*")
-    entry_password.grid(row=1, column=1, padx=10, pady=5)
-
-    # 选择 IMAP 邮箱类型（去掉 Outlook，因为让它成为单独按钮）
-    email_provider = tk.StringVar(value="imap.qq.com")
-    tk.Radiobutton(login_frame, text="QQ邮箱", variable=email_provider, value="imap.qq.com").grid(row=2, column=0, padx=10, pady=5)
-    tk.Radiobutton(login_frame, text="163邮箱", variable=email_provider, value="imap.163.com").grid(row=2, column=1, padx=10, pady=5)
-    tk.Radiobutton(login_frame, text="Gmail",  variable=email_provider, value="imap.gmail.com").grid(row=3, column=0, padx=10, pady=5)
-    tk.Radiobutton(login_frame, text="自定义IMAP", variable=email_provider, value="custom").grid(row=3, column=1, padx=10, pady=5)
-
-    tk.Label(login_frame, text="自定义IMAP服务器:").grid(row=4, column=0, padx=10, pady=5, sticky='e')
-    entry_custom_imap = tk.Entry(login_frame)
-    entry_custom_imap.grid(row=4, column=1, padx=10, pady=5)
-    entry_custom_imap.config(state=tk.DISABLED)
-
-    def toggle_custom_imap(*args):
-        if email_provider.get() == "custom":
-            entry_custom_imap.config(state=tk.NORMAL)
-        else:
-            entry_custom_imap.config(state=tk.DISABLED)
-
-    email_provider.trace("w", toggle_custom_imap)
-
-    # 单独的按钮：通过 Outlook 获取邮件
-    def fetch_outlook_button_click():
-        """点击按钮后直接触发 Outlook 流程。"""
-        global matching_emails
-        # 每次点击先清空一下 matching_emails
-        matching_emails = []
-
+    outlook_button_pressed = True
+    token = None
+    def process():
         emails = fetch_outlook_emails_with_keyword(keyword="12306")
         if emails:
-            # 如果获取到符合条件的邮件，则弹出保存对话框
             save_path = filedialog.asksaveasfilename(
                 defaultextension=".txt",
                 filetypes=[("Text files", "*.txt")]
@@ -368,10 +325,79 @@ def main():
         else:
             log_message("没有找到包含 '12306' 的 Outlook 邮件。")
 
-    outlook_button = tk.Button(login_frame, text="通过 Outlook 获取邮件", command=fetch_outlook_button_click)
-    outlook_button.grid(row=5, column=0, columnspan=2, padx=10, pady=5)
+    threading.Thread(target=process).start()
+def select_folder():
+        folder_path = filedialog.askdirectory()
+        if folder_path:
+            log_message(f"Selected folder: {folder_path}")
+            process_eml_files(folder_path)
 
-    # 开始处理按钮（IMAP专用）
+
+# ========== 主窗口函数 ==========
+# ...（前面的导入和全局变量保持不变）
+
+def main():
+    global is_processing, is_paused, matching_emails, email_count_label, log_text, root
+
+    is_processing = False
+    root = tk.Tk()
+    root.title("邮箱处理工具 v1.0")
+
+    window_width = 700  # 加宽窗口
+    window_height = 500
+    screen_width = root.winfo_screenwidth()
+    screen_height = root.winfo_screenheight()
+    position_top = int(screen_height / 2 - window_height / 2)
+    position_right = int(screen_width / 2 - window_width / 2)
+    root.geometry(f'{window_width}x{window_height}+{position_right}+{position_top}')
+
+    notebook = ttk.Notebook(root)
+    notebook.pack(expand=True, fill='both')
+
+    # 三个Tab页
+    login_frame = ttk.Frame(notebook)
+    folder_frame = ttk.Frame(notebook)
+    about_frame = ttk.Frame(notebook)
+
+    notebook.add(login_frame, text="常规登录获取")
+    notebook.add(folder_frame, text="EML导入处理")
+    notebook.add(about_frame, text="关于")
+
+    # ==================== 常规登录界面 ====================
+    left_panel = ttk.Frame(login_frame)
+    left_panel.pack(side=tk.LEFT, padx=20, pady=10, fill=tk.BOTH, expand=True)
+
+    right_panel = ttk.Frame(login_frame)
+    right_panel.pack(side=tk.RIGHT, padx=20, pady=10, fill=tk.Y)
+
+    # 左侧登录组件
+    tk.Label(left_panel, text="邮箱账号:").grid(row=0, column=0, padx=5, pady=5, sticky='e')
+    entry_username = tk.Entry(left_panel, width=25)
+    entry_username.grid(row=0, column=1, padx=5, pady=5)
+
+    tk.Label(left_panel, text="授权码:").grid(row=1, column=0, padx=5, pady=5, sticky='e')
+    entry_password = tk.Entry(left_panel, show="*", width=25)
+    entry_password.grid(row=1, column=1, padx=5, pady=5)
+
+    # 邮箱类型选择
+    email_provider = tk.StringVar(value="imap.qq.com")
+    providers = [
+        ("QQ邮箱", "imap.qq.com"),
+        ("163邮箱", "imap.163.com"),
+        ("126邮箱", "imap.126.com"),
+        ("139邮箱", "imap.139.com"),
+        ("Gmail", "imap.gmail.com"),
+        ("自定义IMAP", "custom")
+    ]
+
+    for i, (text, value) in enumerate(providers):
+        rb = ttk.Radiobutton(left_panel, text=text, variable=email_provider, value=value)
+        rb.grid(row=2 + i // 2, column=i % 2, padx=5, pady=2, sticky='w')
+
+    tk.Label(left_panel, text="自定义IMAP服务器:").grid(row=8, column=0, padx=5, pady=5, sticky='e')
+    entry_custom_imap = tk.Entry(left_panel, width=25)
+    entry_custom_imap.grid(row=8, column=1, padx=5, pady=5)
+    entry_custom_imap.config(state=tk.DISABLED)
     def start_imap_processing():
         global is_processing, is_paused, matching_emails
 
@@ -436,51 +462,66 @@ def main():
 
             threading.Thread(target=process).start()
             is_processing = True
-            start_button.config(text="中途暂停并导出目前的邮件(不推荐)")
 
-    start_button = tk.Button(login_frame, text="开始IMAP处理", command=start_imap_processing)
-    start_button.grid(row=6, column=0, columnspan=2, pady=10)
+    def toggle_custom_imap(*args):
+        entry_custom_imap.config(state=tk.NORMAL if email_provider.get() == "custom" else tk.DISABLED)
 
-    # 当前匹配邮件数
-    email_count_label = tk.Label(login_frame, text="当前匹配的邮件数: 0")
-    email_count_label.grid(row=7, column=0, columnspan=2, pady=5)
+    email_provider.trace("w", toggle_custom_imap)
 
-    # 日志输出框
-    log_text = tk.Text(login_frame, height=10, width=65)
-    log_text.grid(row=8, column=0, columnspan=2, padx=10, pady=5)
+    # 右侧Outlook组件
+    outlook_btn = ttk.Button(right_panel, text="Outlook登录获取",
+                             command=fetch_outlook_button_click,
+                             width=20)
+    outlook_btn.pack(pady=15)
 
-    # 右侧说明（可自行调整布局）
-    desc_text = (
-        "使用说明：\n\n"
-        "1). 使用 IMAP 获取：\n"
-        "   - 在上面输入邮箱账号、授权码\n"
-        "   - 勾选对应服务器或自定义\n"
-        "   - 点击 [开始IMAP处理]\n\n"
-        "2). 使用 Outlook 获取：\n"
-        "   - 点击 [通过 Outlook 获取邮件]，会弹出浏览器交互登录\n"
-        "   - 成功登录后自动获取邮件\n\n"
-        "3). 文件夹 EML 导入：\n"
-        "   - 切换到 [选择文件夹(EML)] 标签\n"
-        "   - 选择包含 EML 文件的文件夹进行导入"
-    )
-    usage_label = ttk.Label(login_frame, text=desc_text, justify="left")
-    usage_label.grid(row=0, column=2, rowspan=9, padx=10, pady=5, sticky="n")
+    ttk.Separator(right_panel, orient='horizontal').pack(fill=tk.X, pady=10)
 
-    # ==================== 文件夹选择界面布局 ====================
-    def select_folder():
-        folder_path = filedialog.askdirectory()
-        if folder_path:
-            log_message(f"Selected folder: {folder_path}")
-            process_eml_files(folder_path)
+    start_btn = ttk.Button(right_panel, text="开始IMAP处理",
+                           command=start_imap_processing,
+                           width=20)
+    start_btn.pack(pady=15)
 
-    select_button = tk.Button(folder_frame, text="选择文件夹", command=select_folder)
-    select_button.pack(pady=20)
+    email_count_label = ttk.Label(right_panel, text="当前匹配的邮件数: 0")
+    email_count_label.pack(pady=10)
 
-    folder_desc = ttk.Label(folder_frame,
-                            text="适用于不支持 IMAP 登录或其他特殊场景。\n在邮箱客户端导出 EML 文件后，放到同一文件夹再导入。")
-    folder_desc.pack(pady=10)
+    # 日志区域
+    log_text = tk.Text(left_panel, height=12, width=50)
+    log_text.grid(row=10, column=0, columnspan=2, pady=10)
+
+    # ==================== EML导入界面 ====================
+    eml_instructions = ttk.Label(folder_frame,
+                                 text="请选择包含EML文件的文件夹：\n\n1. 在邮箱客户端中导出邮件为EML格式\n2. 将所有文件放入同一文件夹\n3. 点击下方按钮选择该文件夹",
+                                 justify="center")
+    eml_instructions.pack(pady=30)
+
+    select_btn = ttk.Button(folder_frame, text="选择文件夹", command=select_folder)
+    select_btn.pack(pady=10)
+
+    # ==================== 关于界面 ====================
+    about_text = """
+    邮箱处理工具 v1.0
+
+    功能说明：
+    - 支持主流邮箱的IMAP登录（QQ/163/126/139/Gmail）
+    - 支持Outlook账号登录（Microsoft Graph API）
+    - 支持批量处理EML文件
+    - 自动提取包含指定关键词的邮件内容
+
+    技术特性：
+    - 使用Python 3开发
+    - 基于Tkinter的GUI界面
+    - 多线程处理防止界面卡顿
+    - 支持跨平台运行
+
+    开发者：Your Name
+    发布日期：2023-10-01
+    License：MIT
+    """
+    about_label = ttk.Label(about_frame, text=about_text, justify=tk.CENTER)
+    about_label.pack(expand=True, padx=20, pady=20)
 
     root.mainloop()
+
 
 if __name__ == "__main__":
     main()
