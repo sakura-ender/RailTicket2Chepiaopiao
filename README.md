@@ -24,6 +24,7 @@ MacOS在release中下载解压最新版本的 `RailTicket2Chepiaopiao.app.zip`
 打开`RailTicket2Chepiaopiao_macos_universal.app`，如果提示无法打开“RailTicket2Chepiaopiao”，因为Apple无法检查其是否包含恶意软件(当然肯定没有），到系统设置 >隐私与安全性，滑到底部“安全性”部分，点击“已阻止`RailTicket2Chepiaopiao.app`以保护Mac”右侧的“仍要打开“按钮;
 
 或者右键解压后的`RailTicket2Chepiaopiao_macos_universal.app`,点击显示包内容，然后打开终端，输入chmod +x ，然后将`Contents/MacOS/里的RailTicket2Chepiaopiao_macos_universal`拖入终端（**注意+x的前后都有空格）**，回车，然后再打开`RailTicket2Chepiaopiao.app`即可
+这里有动图说明，可等待加载
 ![](.README_images/1.gif)
 
 接下来输入邮箱地址和授权码，点击开始处理，等待程序运行完毕，导出完毕会弹出保存路径，自己选择路径简单命名即可；运行期间再次点击则为保存现在已经查询到的邮件（不推荐）；
