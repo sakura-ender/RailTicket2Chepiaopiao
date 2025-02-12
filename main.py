@@ -256,7 +256,7 @@ def fetch_outlook_emails_with_keyword(keyword="12306"):
         credential = InteractiveBrowserCredential(
             client_id=CLIENT_ID,
             tenant_id=TENANT_ID,
-            redirect_uri="http://localhost:8400"
+            redirect_uri="http://127.0.0.1:8400"
         )
         token = credential.get_token(*SCOPES).token
         safe_log_message("获取 Outlook 令牌成功，正在获取邮件...")
