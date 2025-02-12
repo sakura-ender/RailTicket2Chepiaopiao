@@ -2,6 +2,7 @@ on:
   push:
     tags:
       - '*'
+  workflow_dispatch:  # 允许在 GitHub UI 里手动触发
 
 permissions:
   contents: write
