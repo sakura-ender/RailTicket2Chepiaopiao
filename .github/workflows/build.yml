@@ -56,40 +56,8 @@ jobs:
           name: ${{ runner.os }}-executable
           path: release/${{ runner.os == 'Windows' && 'windows' || 'linux' }}/
 
-  build_x86_64:
-    name: Build macOS x86_64 Binary
-    runs-on: macos-latest
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Install Rosetta 2
-        run: |
-          sudo softwareupdate --install-rosetta --agree-to-license || true
-
-      - name: Setup Python
-        uses: actions/setup-python@v4
-        with:
-          python-version: '3.x'
-
-      - name: Install dependencies for x86_64
-        run: |
-          arch -x86_64 pip install --upgrade pip
-          arch -x86_64 pip install pyinstaller
-          arch -x86_64 pip install -r requirements.txt
-
-      - name: Build x86_64 executable
-        run: |
-          arch -x86_64 pyinstaller --windowed --name ${{ env.APP_NAME }}_macos_x86_64 main.py
-
-      - name: Upload x86_64 artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: macos_x86_64_build
-          path: dist/${{ env.APP_NAME }}_macos_x86_64.app/**
-
-  build_arm64:
-    name: Build macOS arm64 Binary
+  build_macos:
+    name: Build macOS Universal2 Binary
     runs-on: macos-latest
     steps:
       - name: Checkout code
@@ -100,94 +68,36 @@ jobs:
         with:
           python-version: '3.x'
 
-      - name: Install dependencies for arm64
+      - name: Install dependencies
+        # 非源码安装的cffi库默认只支持当前设备架构
+        # 这里卸载cffi库，通过源码安装，以同时支持arm64 + x86_64架构
         run: |
           pip install --upgrade pip
           pip install pyinstaller
           pip install -r requirements.txt
+          pip uninstall cffi
+          pip install --no-cache-dir --no-binary=:all: cffi
 
-      - name: Build arm64 executable
+      - name: Build executable
         run: |
-          pyinstaller --windowed --name ${{ env.APP_NAME }}_macos_arm64 main.py
+          pyinstaller --onefile --windowed --target-arch universal2 main.py
 
-      - name: Upload arm64 artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: macos_arm64_build
-          path: dist/${{ env.APP_NAME }}_macos_arm64.app/**
-
-  merge_binaries:
-    name: Merge macOS Binaries into Universal
-    runs-on: macos-latest
-    needs:
-      - build_x86_64
-      - build_arm64
-    steps:
-      - name: Download x86_64 artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: macos_x86_64_build
-          path: x86_64_build/${{ env.APP_NAME }}_macos_x86_64.app
-
-      - name: Download arm64 artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: macos_arm64_build
-          path: arm64_build/${{ env.APP_NAME }}_macos_arm64.app
-
-      - name: Merge executables using lipo
+      - name: Prepare artifacts
         run: |
           mkdir -p release/macos
-          # 复制 x86_64 应用程序作为基础
-          cp -R x86_64_build/${{ env.APP_NAME }}_macos_x86_64.app release/macos/${{ env.APP_NAME }}_macos_universal.app
-          # 将 arm64 可执行文件复制到应用程序包中
-          cp arm64_build/${{ env.APP_NAME }}_macos_arm64.app/Contents/MacOS/${{ env.APP_NAME }}_macos_arm64 \
-            release/macos/${{ env.APP_NAME }}_macos_universal.app/Contents/MacOS/
-          # 使用 lipo 合并二进制文件，生成通用可执行文件
-          lipo -create \
-            release/macos/${{ env.APP_NAME }}_macos_universal.app/Contents/MacOS/${{ env.APP_NAME }}_macos_x86_64 \
-            release/macos/${{ env.APP_NAME }}_macos_universal.app/Contents/MacOS/${{ env.APP_NAME }}_macos_arm64 \
-            -output release/macos/${{ env.APP_NAME }}_macos_universal.app/Contents/MacOS/${{ env.APP_NAME }}_macos_universal
-          # 更新 Info.plist 中的可执行文件名
-          /usr/libexec/PlistBuddy -c "Set :CFBundleExecutable ${{ env.APP_NAME }}_macos_universal" \
-            release/macos/${{ env.APP_NAME }}_macos_universal.app/Contents/Info.plist
-          # 删除架构特定的可执行文件
-          rm -f release/macos/${{ env.APP_NAME }}_macos_universal.app/Contents/MacOS/${{ env.APP_NAME }}_macos_x86_64
-          rm -f release/macos/${{ env.APP_NAME }}_macos_universal.app/Contents/MacOS/${{ env.APP_NAME }}_macos_arm64
-          find release/macos/${{ env.APP_NAME }}_macos_universal.app -type f -exec chmod +x {} \;
+          mv dist/main.app release/macos/${{ env.APP_NAME }}-${{ env.VERSION }}.app
+        shell: bash
 
-      - name: Upload universal binary artifact
+      - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: macos_universal_build
+          name: macOS-executable
           path: release/macos/
-
-  compress_macos_app:
-    name: Compress macOS app
-    runs-on: macos-latest
-    needs: merge_binaries
-    steps:
-      - name: Download macOS artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: macos_universal_build
-          path: release/macos
-
-      - name: Compress macOS app
-        run: |
-          cd release/macos
-          ditto -c -k --sequesterRsrc --keepParent --preserveHFSCompression ${{ env.APP_NAME }}_macos_universal.app ${{ env.APP_NAME }}-${{ env.VERSION }}.zip
-
-      - name: Upload macOS Release Asset
-        uses: actions/upload-artifact@v4
-        with:
-          name: macos_compressed_build
-          path: release/macos/${{ env.APP_NAME }}-${{ env.VERSION }}.zip
 
   release:
     needs:
       - build_windows_linux
-      - compress_macos_app
+      - build_macos
     runs-on: ubuntu-20.04
     steps:
       - name: Checkout code
@@ -208,7 +118,7 @@ jobs:
       - name: Download macOS artifact
         uses: actions/download-artifact@v4
         with:
-          name: macos_compressed_build
+          name: macOS-executable
           path: release/macos
 
       - name: Create GitHub Release
@@ -248,6 +158,6 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           upload_url: ${{ steps.create_release.outputs.upload_url }}
-          asset_path: release/macos/${{ env.APP_NAME }}-${{ env.VERSION }}.zip
-          asset_name: ${{ env.APP_NAME }}-${{ env.VERSION }}.zip
-          asset_content_type: application/zip
+          asset_path: release/macos/${{ env.APP_NAME }}-${{ env.VERSION }}.app
+          asset_name: ${{ env.APP_NAME }}-${{ env.VERSION }}.app
+          asset_content_type: application/octet-stream
