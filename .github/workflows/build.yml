@@ -81,12 +81,12 @@ jobs:
 
       - name: Build executable
         run: |
-          pyinstaller --onefile --windowed --target-arch universal2 main.py
+          pyinstaller --onefile --windowed --name RailTicket2Chepiaopiao --target-arch universal2 main.py
 
       - name: Prepare artifacts
         run: |
           mkdir -p release/macos
-          mv dist/main.app release/macos/${{ env.APP_NAME }}-${{ env.VERSION }}.app
+          mv dist/RailTicket2Chepiaopiao.app release/macos/${{ env.APP_NAME }}-${{ env.VERSION }}.app
         shell: bash
 
       - name: Upload artifact
