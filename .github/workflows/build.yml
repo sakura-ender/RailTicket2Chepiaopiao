@@ -87,7 +87,8 @@ jobs:
         # macOS产物.app实际上是一个文件夹，需打包成一个文件，因后续release阶段仅支持上传单个文件
         run: |
           mkdir -p release/macos
-          ditto -c -k --sequesterRsrc --keepParent --preserveHFSCompression dist/RailTicket2Chepiaopiao.app release/macos/${{ env.APP_NAME }}-${{ env.VERSION }}.app.zip
+          mv dist/RailTicket2Chepiaopiao.app dist/${{ env.APP_NAME }}-${{ env.VERSION }}.app
+          ditto -c -k --sequesterRsrc --keepParent --preserveHFSCompression dist/${{ env.APP_NAME }}-${{ env.VERSION }}.app release/macos/${{ env.APP_NAME }}-${{ env.VERSION }}.app.zip
         shell: bash
 
       - name: Upload artifact
