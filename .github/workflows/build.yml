@@ -76,7 +76,7 @@ jobs:
           pip install --upgrade pip
           pip install pyinstaller
           pip install -r requirements.txt
-          pip uninstall cffi
+          pip uninstall -y cffi
           pip install --no-cache-dir --no-binary=:all: cffi
 
       - name: Build executable
