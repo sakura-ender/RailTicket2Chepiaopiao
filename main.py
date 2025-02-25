@@ -15,6 +15,9 @@ from email.parser import BytesParser
 import ssl
 import requests
 from azure.identity import InteractiveBrowserCredential
+import html5lib
+import chardet
+import socket
 
 # Outlook 登录配置
 CLIENT_ID = "1a7a3bf9-b338-4b17-b10e-10149e48df97"
@@ -40,7 +43,7 @@ progress_bar = None
 start_btn = None
 cancel_btn = None
 
-
+failed_email_ids = []
 # ---------------------- 辅助的线程安全日志方法 ---------------------- #
 def safe_log_message(message):
     print(message)
@@ -72,16 +75,28 @@ def update_progress(value):
 
 def login_email(username, password, imap_server):
     try:
+        import sys
+        python_version = sys.version_info
         imaplib.Commands['ID'] = ('AUTH')  # 针对 163/126 的特殊操作
+        timeout = 30
         if imap_server == 'imap.139.com':
             ctx = ssl.create_default_context()
             ctx.set_ciphers('DEFAULT')
-            imap = imaplib.IMAP4_SSL(imap_server, ssl_context=ctx)
+            if python_version >= (3, 9):
+                imap = imaplib.IMAP4_SSL(imap_server, ssl_context=ctx, timeout=timeout)
+            else:
+                socket.setdefaulttimeout(timeout)
+                imap = imaplib.IMAP4_SSL(imap_server, ssl_context=ctx)
             imap.login(username, password)
             safe_log_message(f"Logged in as {username}")
             return imap
 
-        imap = imaplib.IMAP4_SSL(imap_server)
+        if python_version >= (3, 9):
+            imap = imaplib.IMAP4_SSL(imap_server, timeout=timeout)
+        else:
+            socket.setdefaulttimeout(timeout)
+            imap = imaplib.IMAP4_SSL(imap_server)
+
         imap.login(username, password)
         # 163/126 邮箱需要发送 ID 命令标识客户端信息
         if imap_server in ['imap.163.com', 'imap.126.com']:
@@ -109,11 +124,12 @@ def decode_mime_words(s):
 
 
 def decode_payload(payload):
-    for charset in ['utf-8', 'gbk', 'gb2312', 'iso-8859-1']:
+    detected_encoding = chardet.detect(payload)['encoding']
+    if detected_encoding:
         try:
-            return payload.decode(charset.strip()).strip()
+            return payload.decode(detected_encoding).strip()
         except UnicodeDecodeError:
-            continue
+            pass
     return None
 
 
@@ -127,57 +143,96 @@ def extract_body_from_msg(msg):
                 payload = part.get_payload(decode=True)
                 if payload:
                     body = decode_payload(payload)
-                    if body and '<' in body and '>' in body:
-                        text = BeautifulSoup(body, 'html.parser').get_text()
-                        text = re.sub(r'\s+', ' ', text).strip()
-                        return text
+                    if body:
+                        try:
+                            if '<' in body and '>' in body:
+                                text = BeautifulSoup(body, 'html5lib').get_text()
+                            else:
+                                text = body
+                            text = re.sub(r'\s+', ' ', text).strip()
+                            return text
+                        except Exception as e:
+                            # 记录异常并抛出
+                            raise Exception(f"解析邮件正文时出错: {e}")
     else:
         payload = msg.get_payload(decode=True)
         if payload:
             body = decode_payload(payload)
-            if body and '<' in body and '>' in body:
-                text = BeautifulSoup(body, 'html.parser').get_text()
-                text = re.sub(r'\s+', ' ', text).strip()
-                return text
+            if body:
+                try:
+                    if '<' in body and '>' in body:
+                        text = BeautifulSoup(body, 'html5lib').get_text()
+                    else:
+                        text = body
+                    text = re.sub(r'\s+', ' ', text).strip()
+                    return text
+                except Exception as e:
+                    raise Exception(f"解析邮件正文时出错: {e}")
     return None
 
 
-def process_email(email_id, imap, keyword, retries=3, delay=5):
-    global is_paused
+def process_email(email_id, imap, keyword, max_size=20*1024*1024, retries=3, delay=5):
+    global is_paused, failed_email_ids
     for attempt in range(1, retries + 1):
         if is_paused:
             return None
         try:
+            # 获取邮件的大小
+            status, data = imap.fetch(email_id, '(RFC822.SIZE)')
+            if status == 'OK':
+                size_line = data[0].decode()
+                match = re.search(r'RFC822\.SIZE (\d+)', size_line)
+                if match:
+                    size = int(match.group(1))
+                    if size > max_size:
+                        safe_log_message(f"邮件(ID:{email_id.decode()})过大（大小：{size}字节），已跳过。")
+                        return None
+            else:
+                safe_log_message(f"无法获取邮件大小(ID:{email_id.decode()}), 状态: {status}")
+                time.sleep(delay)
+                continue  # 继续尝试
+
+            # 获取邮件的完整内容
             status, msg_data = imap.fetch(email_id, '(RFC822)')
             if status == 'OK':
-                break
+                break  # 成功获取邮件内容，退出重试循环
             else:
+                safe_log_message(f"获取邮件内容失败(ID:{email_id.decode()}), 状态: {status}")
                 time.sleep(delay)
-        except imaplib.IMAP4.abort:
+        except (imaplib.IMAP4.abort, imaplib.IMAP4.error) as e:
+            safe_log_message(f"获取邮件(ID:{email_id.decode()})时出错: {e}")
             time.sleep(delay)
-        except Exception:
+        except Exception as e:
+            safe_log_message(f"未知错误 (ID:{email_id.decode()}): {e}")
             time.sleep(delay)
     else:
+        # 达到最大重试次数，记录失败的邮件ID
+        failed_email_ids.append(email_id.decode())
+        safe_log_message(f"邮件(ID:{email_id.decode()})在多次重试后仍然失败，已跳过。")
         return None
 
     if not msg_data:
         return None
 
+    # 处理邮件内容
     for response_part in msg_data:
         if isinstance(response_part, tuple):
             try:
                 msg = email.message_from_bytes(response_part[1])
-            except Exception:
-                continue
-
-            body = extract_body_from_msg(msg)
-            if body and keyword in body:
-                return msg
+                body = extract_body_from_msg(msg)
+                if body and keyword in body:
+                    return msg
+                else:
+                    return None
+            except Exception as e:
+                safe_log_message(f"处理邮件(ID:{email_id.decode()})时出错: {e}")
+                failed_email_ids.append(email_id.decode())
+                return None
     return None
 
 
 def fetch_emails_with_keyword_in_body(imap, keyword):
-    global matching_emails
+    global matching_emails, failed_email_ids
     try:
         imap.select("inbox")
     except Exception as e:
@@ -213,6 +268,13 @@ def fetch_emails_with_keyword_in_body(imap, keyword):
         update_progress(progress)
 
     safe_log_message(f"总共找到 {len(matching_emails)} 封正文中包含 '{keyword}' 的邮件。")
+
+    # 检查并展示无法处理的邮件 ID
+    if failed_email_ids:
+        failed_ids_str = ', '.join(failed_email_ids)
+        safe_log_message(f"处理以下邮件时出错，无法解析：{failed_ids_str}")
+        root.after(0, lambda: messagebox.showwarning("解析错误", f"以下邮件无法解析：\n{failed_ids_str}"))
+
     return matching_emails
 
 
